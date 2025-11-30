@@ -1,0 +1,55 @@
+历史对话：
+1. 不同对话窗口历史不冲突，怎么打包的
+2. 多窗口并行/排队机制，如何识别
+
+中断回退：
+1. 按钮暂停再次推理的实现
+2. 对话状态回退（目前回退有时候不全，历史里保留了上一个中断前的问题。）
+
+多模态：
+1. vl/text模型类型；输入识别与管理（trt设计模式）
+TensorRT-LLM 通过 分层抽象 + 统一数据流 实现一个服务端适配多种模态：
+
+  1. 多模态数据跟踪层 (MultimodalDataTracker)
+  # 位置：tensorrt_llm/inputs/utils.py
+  class MultimodalDataTracker:
+      def __init__(self, model_type: str):
+          self._data = defaultdict(list)  # 存储 {modality: [data]}
+          self._placeholder_counts = {}
+
+      def add_data(self, media_type: str, data):
+          # 支持 'image', 'video', 'audio' 等任意模态
+          placeholder = retrieve_multimodal_placeholder(model_type, media_type)
+          self._data[media_type].append(data)
+
+  2. 异步模态加载
+  # 位置：tensorrt_llm/serve/chat_utils.py
+  def parse_chat_message_content_part(part, mm_data_tracker):
+      if part_type == "image_url":
+          return MultimodalData(modality="image",
+                               data=async_load_image(url))
+      elif part_type == "video_url":
+          return MultimodalData(modality="video",
+                               data=async_load_video(url))
+      elif part_type == "audio_url":
+          return MultimodalData(modality="audio",
+                               data=async_load_audio(url))
+
+  3. 统一的推理流程
+  OpenAI 请求 → 解析消息 → MultimodalDataTracker 异步加载
+      → 添加占位符 (<image>/<video>/<audio>)
+      → 应用聊天模板 → LLM.generate_async()
+      → 返回 OpenAI 兼容响应
+
+  关键文件：
+  - openai_server.py (48.8 KB) - 核心服务器和路由
+  - chat_utils.py (10.6 KB) - 多模态消息解析
+  - multimodal.py - 多模态数据结构定义
+  - mm_encoder.py - 专门的多模态编码器类
+
+
+ DeepSeek-VL 模型使用自定义架构 multi_modality，但你的模型目录中缺少必要的 Python 代码文件
+
+2.不同输出内容的方式。
+
+openai API支持：
